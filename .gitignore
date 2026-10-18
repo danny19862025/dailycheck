@@ -1,0 +1,19 @@
+# Python cache and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local task data and reminder locks
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+reminders.lock
+
+# Local configuration
+.env
+.env.*
+!.env.example
+*.swp
+.DS_Store

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Daily Check
+Comment=Daily task reminders and completion check-ins
+Exec=/usr/bin/python3 /absolute/path/to/dailycheck/app.py
+Icon=appointment-soon
+Terminal=false
+Categories=Office;Utility;
+Keywords=task;reminder;todo;daily;
+StartupNotify=false
