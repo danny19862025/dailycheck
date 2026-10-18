@@ -17,3 +17,11 @@ reminders.lock
 !.env.example
 *.swp
 .DS_Store
+
+# Local exports, backups, and reminder diagnostics
+dailycheck*.json
+dailycheck*.csv
+backups/
+reminders.log
+.coverage
+.pytest_cache/

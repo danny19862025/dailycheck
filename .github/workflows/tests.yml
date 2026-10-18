@@ -1,0 +1,24 @@
+name: Daily Check tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install desktop test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y python3-tk python3-gi dbus-x11 xvfb xauth
+      - name: Storage, scheduling, launcher, and GUI tests
+        run: xvfb-run -a /usr/bin/python3 -m unittest discover -s . -v
+      - name: Native notifications and tray protocol
+        run: /usr/bin/python3 tests/desktop_smoke.py
+      - name: Real editor and background-service lifecycle
+        run: xvfb-run -a /usr/bin/python3 tests/ui_bridge_smoke.py
