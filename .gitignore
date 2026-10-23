@@ -25,3 +25,4 @@ backups/
 reminders.log
 .coverage
 .pytest_cache/
+.calendar-deps/

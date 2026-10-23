@@ -12,6 +12,8 @@ from tkinter import ttk, messagebox, filedialog
 
 from store import Store, PRIORITIES
 import desktop
+from calendar_ui import CalendarConnectionsMixin
+from calendar_sync import on_day
 
 VERSION = '0.2.0'
 DATA = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'daily-check'
@@ -43,7 +45,7 @@ def system_dark():
     return False
 
 
-class App(tk.Tk):
+class App(CalendarConnectionsMixin, tk.Tk):
     def __init__(self, store=None, integrate=False):
         super().__init__()
         self.store = store or Store(DATA / 'tasks.sqlite3')
@@ -52,7 +54,9 @@ class App(tk.Tk):
         self.bridge = None
         self.edit_id, self.rows, self.role_widgets = None, {}, []
         self.ready, self.refresh_job = False, None
+        self.refresh_revision, self.calendar_signature = None, None
         self.calendar_month = date.today().replace(day=1)
+        self.init_calendar_connections()
         self.title(f'Daily Check {VERSION} • Plans & Reminders')
         self.geometry('1320x900')
         self.minsize(1080, 780)
@@ -92,6 +96,7 @@ class App(tk.Tk):
         self.refresh()
         self.after(5000, self.tick)
         self.after(1000, self.update_timers)
+        self.after(300, self.refresh_calendars)
         if integrate:
             self.bridge = desktop.UiBridge(self)
             self.after(1200, self.refresh_service_status)
@@ -301,15 +306,57 @@ class App(tk.Tk):
         ttk.Button(bar, text='‹ Previous', command=lambda: self.move_month(-1)).pack(side='left')
         self.month_title = tk.StringVar(); ttk.Label(bar, textvariable=self.month_title, font=('DejaVu Sans', 18, 'bold')).pack(side='left', padx=20)
         ttk.Button(bar, text='Next ›', command=lambda: self.move_month(1)).pack(side='left')
-        ttk.Label(self.calendar_tab, text='Each reminder time counts separately. Click a day to see its tasks.', style='Muted.TLabel').pack(anchor='w', pady=(0, 10))
+        ttk.Button(bar, text='Connect calendars…', style='Primary.TButton', command=self.connect_calendars).pack(side='right')
+        ttk.Button(bar, text='Export month…', command=self.export_calendar_month).pack(side='right', padx=8)
+        self.calendar_connection_status = tk.StringVar()
+        ttk.Label(self.calendar_tab, textvariable=self.calendar_connection_status, style='Muted.TLabel', wraplength=1150).pack(anchor='w', pady=(0, 8))
+        self.update_calendar_status()
+        agenda = ttk.Frame(self.calendar_tab); agenda.pack(side='bottom', fill='x')
+        agenda_bar = ttk.Frame(agenda); agenda_bar.pack(fill='x', pady=(10, 4))
+        self.calendar_agenda_title = tk.StringVar()
+        ttk.Label(agenda_bar, textvariable=self.calendar_agenda_title, font=('DejaVu Sans', 12, 'bold')).pack(side='left')
+        ttk.Button(agenda_bar, text='View tasks', command=lambda: self.open_day(self.calendar_day.isoformat())).pack(side='right')
+        ttk.Button(agenda_bar, text='Create reminder', command=self.reminder_from_calendar).pack(side='right', padx=8)
+        ttk.Button(agenda_bar, text='Details', command=self.calendar_event_details).pack(side='right')
+        self.style.configure('Calendar.Treeview', rowheight=26)
+        self.calendar_agenda = ttk.Treeview(agenda, columns=('time', 'title', 'calendar'), show='headings', height=3, selectmode='browse', style='Calendar.Treeview')
+        for column, title, width in [('time', 'Time', 90), ('title', 'Event / task', 550), ('calendar', 'Calendar', 260)]:
+            self.calendar_agenda.heading(column, text=title); self.calendar_agenda.column(column, width=width)
+        self.calendar_agenda.pack(fill='x'); self.calendar_agenda.bind('<Double-1>', self.calendar_event_details)
+        self.calendar_agenda_empty = tk.StringVar()
+        ttk.Label(agenda, textvariable=self.calendar_agenda_empty, style='Muted.TLabel').pack(anchor='w', pady=(4, 0))
         self.month_grid = ttk.Frame(self.calendar_tab); self.month_grid.pack(fill='both', expand=True)
 
     def move_month(self, step):
         index = self.calendar_month.year * 12 + self.calendar_month.month - 1 + step
         self.calendar_month = date(index // 12, index % 12 + 1, 1)
+        self.calendar_day = self.calendar_month
         self.render_calendar()
 
     def render_calendar(self):
+        self.update_calendar_status()
+        events = self.calendar_month_events()
+        self.render_calendar_agenda()
+        days_to_show = []
+        now = datetime.now()
+        for week, days in enumerate(calendar.monthcalendar(self.calendar_month.year, self.calendar_month.month), 1):
+            for col, number in enumerate(days):
+                if not number: continue
+                day = self.calendar_month.replace(day=number).isoformat()
+                rows = self.store.rows(day, now=now)
+                done = sum(bool(r['done']) for r in rows)
+                late = sum(self.store.status(r, now) == 'late' for r in rows)
+                text = f'{number}\n{done}/{len(rows)} done' if rows else f'{number}\n—'
+                if late: text += f'\n{late} late'
+                event_count = len(on_day(events, date.fromisoformat(day)))
+                if event_count: text = text.replace(str(number), f'{number} · {event_count} events', 1)
+                bg = '#25483a' if rows and done == len(rows) else ('#483b2a' if late else self.colors['card'])
+                fg = '#ffffff' if bg != self.colors['card'] else self.colors['text']
+                days_to_show.append((week, col, day, text, bg, fg))
+        signature = (self.calendar_month, self.colors['select'], self.colors['text'], tuple(days_to_show))
+        if signature == self.calendar_signature:
+            return
+        self.calendar_signature = signature
         for child in self.month_grid.winfo_children(): child.destroy()
         self.month_title.set(self.calendar_month.strftime('%B %Y'))
         for col, name in enumerate(calendar.day_abbr):
@@ -317,18 +364,9 @@ class App(tk.Tk):
             self.month_grid.columnconfigure(col, weight=1, uniform='day')
         for week, days in enumerate(calendar.monthcalendar(self.calendar_month.year, self.calendar_month.month), 1):
             self.month_grid.rowconfigure(week, weight=1, uniform='week')
-            for col, number in enumerate(days):
-                if not number: continue
-                day = self.calendar_month.replace(day=number).isoformat()
-                rows = self.store.rows(day)
-                done = sum(bool(r['done']) for r in rows)
-                late = sum(self.store.status(r, datetime.now()) == 'late' for r in rows)
-                text = f'{number}\n{done}/{len(rows)} done' if rows else f'{number}\n—'
-                if late: text += f'\n{late} late'
-                bg = '#25483a' if rows and done == len(rows) else ('#483b2a' if late else self.colors['card'])
-                fg = '#ffffff' if bg != self.colors['card'] else self.colors['text']
-                button = tk.Button(self.month_grid, text=text, bg=bg, fg=fg, relief='flat', font=('DejaVu Sans', 11), command=lambda d=day: self.open_day(d), activebackground=self.colors['select'], activeforeground=self.colors['text'])
-                button.grid(row=week, column=col, sticky='nsew', padx=3, pady=3)
+        for week, col, day, text, bg, fg in days_to_show:
+            button = tk.Button(self.month_grid, text=text, bg=bg, fg=fg, relief='flat', font=('DejaVu Sans', 10), command=lambda d=day: self.select_calendar_day(d), activebackground=self.colors['select'], activeforeground=self.colors['text'])
+            button.grid(row=week, column=col, sticky='nsew', padx=3, pady=3)
 
     def open_day(self, day):
         self.day.set(day); self.notebook.select(self.task_tab); self.refresh()
@@ -428,6 +466,7 @@ class App(tk.Tk):
             self.after_cancel(self.refresh_job); self.refresh_job = None
         try:
             day = self.valid_day(); now = datetime.now()
+            revision = self.current_revision(now)
             all_rows = self.store.rows(day, now=now)
             rows = self.store.rows(day, self.search.get(), self.state_filter.get(), self.category_filter.get(), self.tag_filter.get(), now)
         except ValueError as error: self.error(error); return
@@ -461,6 +500,14 @@ class App(tk.Tk):
         if self.stats_task.get() not in values: self.stats_task.set('All tasks')
         self.update_actions(); self.render_checklist()
         self.tab_changed()
+        self.refresh_revision = revision
+
+    def current_revision(self, now=None):
+        # data_version detects notification actions from the separate service;
+        # total_changes detects edits on this connection. Due times use minutes.
+        now = now or datetime.now()
+        return (self.store.db.total_changes, self.store.db.execute('PRAGMA data_version').fetchone()[0],
+                now.replace(second=0, microsecond=0))
 
     def selected_row(self):
         selected = self.tree.selection()
@@ -574,7 +621,13 @@ class App(tk.Tk):
         self.after(1000, self.update_timers)
 
     def tick(self):
-        self.store.auto_backup(); self.refresh(); self.after(5000, self.tick)
+        self.store.auto_backup()
+        self.refresh_calendars()
+        if self.current_revision() != self.refresh_revision:
+            self.refresh()
+        elif self.notebook.select() == str(self.stats_tab) and self.store.db.execute('SELECT 1 FROM checks WHERE started IS NOT NULL LIMIT 1').fetchone():
+            self.render_stats()
+        self.after(5000, self.tick)
 
     def tab_changed(self, _event=None):
         if not self.ready: return
@@ -632,6 +685,8 @@ class App(tk.Tk):
 
     def destroy(self):
         if self.bridge: self.bridge.close(); self.bridge = None
+        for job in self.tk.splitlist(self.tk.call('after', 'info')):
+            self.after_cancel(job)
         if self.own_store: self.store.db.close(); self.own_store = False
         super().destroy()
 

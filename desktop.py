@@ -110,7 +110,7 @@ class UiBridge:
             if result != 1:
                 return
             self.registration = self.connection.register_object('/org/dailycheck/App', Gio.DBusNodeInfo.new_for_xml(APP_XML).interfaces[0], self.handle, None, None)
-            app.after(60, self.pump)
+            self.pump_job = app.after(250, self.pump)
         except GLib.Error:
             pass
 
@@ -131,10 +131,11 @@ class UiBridge:
             if not context.pending():
                 break
             context.iteration(False)
-        self.app.after(60, self.pump)
+        self.pump_job = self.app.after(250, self.pump)
 
     def close(self):
         if self.registration:
+            self.app.after_cancel(self.pump_job)
             self.connection.unregister_object(self.registration)
             call(self.connection, 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'ReleaseName', GLib.Variant('(s)', (APP_NAME,)))
             self.registration = None
@@ -146,6 +147,8 @@ class Service:
         self.paused, self.tray_registered, self.revision = False, False, 1
         self.notifications, self.inflight, self.registrations, self.tts_process = {}, set(), [], None
         self.loop = GLib.MainLoop()
+        from calendar_sync import SyncWorker
+        self.calendar_worker = SyncWorker(store.path)
         self.registrations.append(self.connection.register_object('/org/dailycheck/Service', Gio.DBusNodeInfo.new_for_xml(SERVICE_XML).interfaces[0], self.handle_service, None, None))
         self.registrations.append(self.connection.register_object('/StatusNotifierItem', Gio.DBusNodeInfo.new_for_xml(SNI_XML).interfaces[0], self.handle_tray, self.tray_property, None))
         self.registrations.append(self.connection.register_object('/Menu', Gio.DBusNodeInfo.new_for_xml(MENU_XML).interfaces[0], self.handle_menu, self.menu_property, None))
@@ -153,7 +156,12 @@ class Service:
         self.subscription = self.connection.signal_subscribe('org.freedesktop.Notifications', 'org.freedesktop.Notifications', None, '/org/freedesktop/Notifications', None, Gio.DBusSignalFlags.NONE, self.notification_signal)
         self.watcher = Gio.bus_watch_name_on_connection(self.connection, 'org.kde.StatusNotifierWatcher', Gio.BusNameWatcherFlags.NONE, self.register_tray, lambda *_: setattr(self, 'tray_registered', False))
         self.ticker = GLib.timeout_add_seconds(5, self.tick)
-        GLib.idle_add(self.tick)
+        GLib.idle_add(self.initial_tick)
+
+    def initial_tick(self):
+        # tick() keeps the five-second timeout alive; an idle source must run once.
+        self.tick()
+        return GLib.SOURCE_REMOVE
 
     def register_tray(self, connection, *_args):
         def done(conn, result):
@@ -301,6 +309,7 @@ class Service:
             print(str(error), file=sys.stderr, flush=True)
 
     def tick(self):
+        self.calendar_worker.start()
         try:
             self.store.auto_backup()
         except (OSError, sqlite3.Error) as error:

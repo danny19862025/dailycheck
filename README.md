@@ -1,8 +1,8 @@
 # Daily Check
 
 A local Linux desktop planner with flexible reminders, checklists, and completion
-check-ins. Built with Python, Tkinter, and SQLite. Tasks and speech stay local;
-no cloud account or network service is used.
+check-ins. Built with Python, Tkinter, and SQLite. Tasks and speech stay local.
+Optional calendar connections read local files or online iCalendar feeds.
 
 ![Daily Check dark task editor with priorities, filters, checklists, and reminder controls](docs/images/dailycheck.png)
 
@@ -67,8 +67,52 @@ On-time percentages count all reminders already due, including missed reminders,
 with Monday as the start of the week. Snoozing never changes the original due
 time. Statistics use the current schedule plus saved history, bounded to ten years.
 
-The **Calendar** shows completion counts and late reminders for each day. Click a
-day to see its tasks. [View the calendar](docs/images/calendar.png).
+The **Calendar** shows completion counts, late reminders, and connected calendar
+events for each day. Click a day to see its combined agenda; **View tasks** opens
+that day's task list. [View the calendar](docs/images/calendar.png).
+
+### Connect local and cloud calendars
+
+Open **Calendar → Connect calendars…**. [View the connection panel](docs/images/calendar-connections.png).
+
+- **Local:** choose an existing `.ics` calendar file. Evolution's local calendar
+  is usually under `~/.local/share/evolution/calendar/system/`. Other calendar
+  apps can export an `.ics` file; reconnect or refresh that export after changes.
+  This reads files, rather than directly accessing Akonadi/Evolution accounts.
+- **Google Calendar:** in Google Calendar settings, select your calendar, open
+  **Integrate calendar**, and copy **Secret address in iCal format**. Paste it as
+  the feed URL and choose **Connect cloud calendar**.
+- **Outlook:** use the ICS link under web settings → Calendar → Shared calendars
+  → Publish a calendar. **iCloud:** use the calendar's published sharing link.
+  Other HTTPS/webcal iCalendar subscription links also work.
+- **Notion Calendar:** connect the Google, Outlook, or iCloud calendar you use in
+  Notion Calendar, using that provider's feed. Notion database calendar views are
+  not supported. Provider-specific instructions and help links are in the panel.
+
+Connections are **read-only**. Events appear beside your tasks, with recurring
+events, excluded occurrences, all-day events, and desktop-local event times.
+Choose an event and **Create reminder** to review and save a separate Daily Check
+task. Connected events do not send Daily Check reminders until you create a task.
+**Export month…** saves that month's Daily Check task occurrences as an `.ics`
+snapshot to import into your local/cloud calendar. It does not write to accounts
+or continuously sync task edits back to a provider.
+
+Refresh runs in a worker every 15 minutes while the app or reminder service is
+running; **Refresh calendars** requests an immediate refresh. There is no
+continuous polling. The last successful cache remains available offline; failed
+connections show their errors. Disconnect removes the local connection and cache,
+keeping the source calendar and any tasks you created from it.
+
+Feed links and event caches stay in the private SQLite database, including SQLite
+backups. Feed links may grant access to calendar contents. JSON/CSV task exports
+do not include calendar connections or feed credentials. No API keys or OAuth
+application setup are required for calendar feeds.
+
+Install calendar support once in this checkout (already installed on this machine):
+
+```sh
+/usr/bin/python3 -m pip install --target .calendar-deps -r requirements-calendar.txt
+```
 
 ## Appearance, audio, and focus mode
 

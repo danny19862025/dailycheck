@@ -174,6 +174,43 @@ class FeatureTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.store.occurrence(task, '2026-09-28', '09:00', allow_history=False)
 
     @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requires display')
+    def test_idle_calendar_reuses_widgets_and_notices_service_changes(self):
+        from app import App
+        today = date.today().isoformat()
+        task = self.save(day=today, time='00:00')
+        app = App(self.store); self.addCleanup(app.destroy)
+        app.notebook.select(app.calendar_tab); app.update()
+        original = app.month_grid.winfo_children()
+        with patch.object(app, 'refresh', wraps=app.refresh) as refresh:
+            app.tick()
+            refresh.assert_not_called()
+        # A minute refresh must also preserve an unchanged calendar's buttons.
+        app.refresh()
+        self.assertEqual(app.month_grid.winfo_children(), original)
+        other = Store(self.store.path); self.addCleanup(other.db.close)
+        other.complete(task, today)
+        app.tick(); app.update()
+        self.assertTrue(next(iter(app.rows.values()))['done'])
+        self.assertNotEqual(app.month_grid.winfo_children(), original)
+        updated = app.month_grid.winfo_children()
+        app.tick()
+        self.assertEqual(app.month_grid.winfo_children(), updated)
+
+    @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requires display')
+    def test_idle_refresh_updates_late_filter_when_due_time_passes(self):
+        from app import App
+        today = date.today()
+        self.save(day=today.isoformat(), time='10:00')
+        with patch('app.datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime.combine(today, datetime.min.time()).replace(hour=9)
+            app = App(self.store); self.addCleanup(app.destroy)
+            app.state_filter.set('Late'); app.refresh()
+            self.assertFalse(app.rows)
+            clock.now.return_value = clock.now.return_value.replace(hour=10, second=1)
+            app.tick()
+            self.assertEqual(len(app.rows), 1)
+
+    @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requires display')
     def test_editor_filters_checklist_dark_calendar_and_stats(self):
         from app import App
         app = App(self.store); self.addCleanup(app.destroy)

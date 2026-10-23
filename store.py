@@ -144,6 +144,8 @@ class Store:
                     SELECT c.task,c.day,t.time,c.done,c.reminded FROM legacy_checks c JOIN tasks t ON t.id=c.task''')
                 self.db.execute('DROP TABLE legacy_checks')
             self.db.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)')
+            from calendar_sync import init_schema
+            init_schema(self.db)
             self.db.execute(f'PRAGMA user_version={VERSION}')
 
     def settings(self):
